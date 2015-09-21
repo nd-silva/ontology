@@ -1,65 +1,21 @@
-import sys, fileinput
-from utils import *
+import sys, fileinput, re
+import pyparsing as pp
 from model import Topic, Question
 
-
-
-
-"""Main entry point for the Ontology challenge from Quora challenges
+class OntologyMain:
+	"""Main entry point for the Ontology challenge from Quora challenges
 	This class is responsible for parsing the sample file and producing the desired output
 	"""
-class OntologyMain:
-	
-	"""Parses the flattened topic tree to build the ontology, and returns the root topic """
 	def __init__(self):
-		self._index = {}
+		 
+		#the index is a convenience to quickly look up sub topics
+		#can be optional and require tree traversal
+		self._index = {} 
 		self._root = None
 
-
-	"""Continues building the ontology using the given string, starting at the topic named root.
-	 	Returns the remainder of the tree_str that has not been parsed once the entire sub tree rooted at root has been created.
-	"""
-	def create_recursive(self, tree_str, root):
-		"""this part uses the partition function to scan the string from left to right.
-		basic algortihim:
-		divide the flattened tree into 2 - the left being the first word before a space, and the rest what we call the "remainder"
-		the first word before a space is always a topic name,  thus this is a subtopic of root, since this method is only called when an opening bracket is encountered
-		after creating a topic, check the remainder. one of 3 things is possible:
-		1) remainder starts with another word, (meaning another child of root)
-		2) remainder starts with an opening bracket (meaning the child we just created also has children)
-		3) remainder starts with a closing bracket meaning there are no more children of root"""
-		
-		partitions = tree_str.lstrip().partition(" ")
-		while True: 
-			left_portion = partitions[0]
-			remainder = partitions[2]
-			#in the case of multiple closing brackets in a sequence, e.g. " ) ) )", the left side of the partition is also a bracket
-			if not left_portion or re.match("^\s*\)",left_portion): 
-				#there are no more spaces, meaning there is no more data for this topic
-				#return remainder #let the parent continue processing the rest of the tree
-				if root is None:
-					break
-				else:
-					root = root._parent
-					#need to split again
-			else:
-				topic_name=left_portion
-				child = Topic(topic_name, root) 
-				self.add_to_index(child, topic_name) #add to index
-				if re.match("^\s*\)", remainder): 
-					root = root._parent 
-					remainder = remainder[1:]
-				elif re.match("^\s*\(",remainder): #startswith("("):
-					root = child
-					#the newly created child topic also has sub topics
-					remainder = remainder[2:] #remove the opening bracket and the space
-					#remainder = self.create_recursive(remainder, child).lstrip()
-			partitions = remainder.lstrip().partition(" ")
-	
-
-		
-		
 	def add_question(self, line):
+		""""add the question of the format <topic>: question text to the ontology
+		"""
 		parse_result = parse_question(line)
 		if parse_result is not None:
 			question = Question(parse_result[1])
@@ -70,7 +26,8 @@ class OntologyMain:
 		self._index[topic_name] = topic
 	
 	def check_sub_topics(self,query, topic):
-		#check each question to see if it matches the query
+		"""helper method to recursively check the Topic rooted at topic to see if any of them also match the query
+		"""
 		matching_questions = [q for q in topic.questions() if q.matches(query)]
 		count = len(matching_questions)
 		
@@ -78,50 +35,100 @@ class OntologyMain:
 			count += self.check_sub_topics(query, sub_topic)
 		return count
 		
-		
+	
 	def answer_query(self, query):
+		"""return the number of topics in the ontology that answer the given query of the form 'topic question'
+		"""
 		parse_result = parse_question(query)
 		if parse_result is not None:
 			question = parse_result[1]
 			topic_name = parse_result[0]
 			topic = self._index[topic_name]
 			count = self.check_sub_topics(question, topic)
-		return count
+			return count
 
+	def create_sub_tree(self, root, children):
+		"""Add the list of child topics to root
+		"""
+		for next in children:		
+			if not islist(next):
+				child_topic = Topic(next, root)
+				self.add_to_index(child_topic, next)
+			else:
+				self.create_sub_tree(child_topic, next)
+	
 	def build_ontology_from_string(self, topic_tree):
-		#manually parsing the text is one option, another was to use pyparsing, 
-		#but the dev env on hackerrank don't include it so I wanted to stick to the restrictions
+		#use partition to separate the root topic name from the rest of the tree
 		partition = topic_tree.partition(" ")
 		root_topic_name = partition[0]
+		sub_tree_str = partition[2]
 		self._root = Topic(root_topic_name, None)
+		
 		self.add_to_index(self._root, root_topic_name)
-		remainder = partition[2]
-		self.create_recursive(remainder[2:], self._root) #remove the bracket and the first space
+		##pyparsing does the parsing for us - returns a nested list of strings
+		##if a topic in the list is immediately followed by a list,
+		#then the list represents the subtree rooted at topic
+		sub_list = pp.nestedExpr().parseString(sub_tree_str).asList()[0]
+	
+		for next_elem in sub_list:		
+			if not islist(next_elem):
+				child_topic = Topic(next_elem, self._root)
+				self.add_to_index(child_topic, next_elem)
+			else:
+				self.create_sub_tree(child_topic, next_elem)
 		return self._root
 		
 	def process_queries(self):
-		with fileinput.input() as input:
-			topic_count = int(readline_strip(input))
-			topic_tree = readline_strip(input)
-			question_count = int(readline_strip(input))
-			root = self.build_ontology_from_string(topic_tree.strip())
-			if len(self._index) != topic_count:
-				print("Error...we should have created the same amount of topics")
-				print("Input tree: ", topic_tree)
-				print("generated tree: ", str(root))
-				sys.exit(1)
+		"""main entry point - read the files from commandline/stdin and answer queries
+		"""
+		input = fileinput.FileInput()
+		
+		for line in input:
+			line= line.strip()
+			if input.isfirstline():
+				topic_count = int(line)
+				self._index.clear()
+			else:
+				currentline = input.filelineno()
+				if currentline == 2:
+					topic_tree = line
+					root = self.build_ontology_from_string(topic_tree)
+					if len(self._index) != topic_count:
+						print("Error, for file %s, %d we should have created the same amount of topics %d " % (input.filename(),  topic_count))
+						print("Input tree: ", topic_tree)
+						print("generated tree: ", str(root))
+						sys.exit(1)
+				elif currentline == 3:
+					question_count = int(line)
+				
+				elif currentline >= 4 and currentline < (question_count+4):
+					self.add_question(line)
+				elif currentline >= question_count+5: #queries start after all the questions
+					query = line
+					result = self.answer_query(query)
+					print(result)
+		
+				
 
-			#now read questions
-			for count in range (0, question_count):
-				line = readline_strip(input)
-				self.add_question(line)
-			query_count =int(readline_strip(input))
-			for count in range(0, query_count):
-				query = readline_strip(input)
-				result = self.answer_query(query)
-				print(result)
 
 
+#precompiled regular expression used to parse questions and queries
+QUESTION_REGEX = re.compile("(?P<topic>[A-Za-z]+)\:? (?P<question>.*)")
+
+def parse_question(line):
+	
+	match = QUESTION_REGEX.match(line)
+	if match is not None:
+		groups = match.groupdict()
+		question = groups["question"]
+		topic = groups["topic"]
+		return (topic, question)			
+	return None
+
+
+def islist(obj):
+	return type(obj) == list
+	
 if __name__ == "__main__":
 	controller = OntologyMain()
 	controller.process_queries()
