@@ -1,12 +1,3 @@
-class QueryResult:
-	def __init__(self, query):
-		self._query = query
-		self._matches = 0
-	def increment_matches(self, count):
-		self._matches = self._matches + count
-	def matches(self):
-		return self._matches
-
 class Question:
 	def __init__(self, question):
 		self._question_text = question
@@ -21,7 +12,6 @@ class Topic:
 		self._name = name
 		self._sub_topics = []
 		self._questions = []
-		print("mi nombre es " + name)
 		if (self._parent is not None):
 			self._parent.add_sub_topic(self)
 	def __str__(self):
@@ -34,6 +24,12 @@ class Topic:
 	def questions(self):
 		return self._questions
 	
+	def add_question(self, question):
+		self._questions.append(question)
+		
 	def add_sub_topic(self, child):
 		self._sub_topics.append(child)
+	
+	def sub_topics(self):
+		return self._sub_topics
 
